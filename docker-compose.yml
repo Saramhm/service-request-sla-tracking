@@ -1,0 +1,80 @@
+# Service Request Intake & SLA Tracking — local stack
+#   PostgreSQL : localhost:5432  (db: servicedesk — app data, db: n8n — n8n internals)
+#   n8n        : http://localhost:5678
+#   Appsmith   : http://localhost:8080
+#   Mailpit    : http://localhost:8025  (catches every email n8n sends; nothing leaves the machine)
+#
+# Inside the Docker network the services reach each other by name:
+#   Appsmith -> n8n      http://n8n:5678/webhook/...
+#   n8n/Appsmith -> DB   host "postgres", port 5432
+#   n8n -> SMTP          host "mailpit", port 1025
+
+name: service-desk
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: servicedesk
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      # Runs once, on first start with an empty volume (alphabetical order)
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d servicedesk"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      GENERIC_TIMEZONE: ${BUSINESS_TIMEZONE}
+      TZ: ${BUSINESS_TIMEZONE}
+      WEBHOOK_URL: http://localhost:5678/
+      N8N_SECURE_COOKIE: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n:/workflows:ro
+
+  appsmith:
+    image: appsmith/appsmith-ce:${APPSMITH_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      - n8n
+    ports:
+      - "8080:80"
+    volumes:
+      - appsmith_stacks:/appsmith-stacks
+
+  mailpit:
+    image: axllent/mailpit:${MAILPIT_VERSION:-latest}
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+
+volumes:
+  pg_data:
+  n8n_data:
+  appsmith_stacks:

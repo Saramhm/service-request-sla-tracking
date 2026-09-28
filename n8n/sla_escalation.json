@@ -1,0 +1,163 @@
+{
+  "id": "svcSlaEscalate01",
+  "name": "SLA — Escalation",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "errorWorkflow": "svcOpsErrors0001"
+  },
+  "nodes": [
+    {
+      "id": "3e4f5061-0000-4a00-8b00-00000000c001",
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "3e4f5061-0000-4a00-8b00-00000000c002",
+      "name": "Run now (POST /webhook/escalation/run)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        400
+      ],
+      "webhookId": "9c3d4e5f-0000-4a00-8b00-00000000c002",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "escalation/run",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "3e4f5061-0000-4a00-8b00-00000000c003",
+      "name": "Escalate due requests (one transaction)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        260,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "postgres": {
+          "id": "svcDeskPostgres1",
+          "name": "Service Desk DB"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT escalate_requests() AS result;",
+        "options": {}
+      }
+    },
+    {
+      "id": "3e4f5061-0000-4a00-8b00-00000000c004",
+      "name": "Build escalation emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Turns the escalate_requests() result into at most two digest emails:\n// level 1 (at risk) goes to the Automation team, level 2 (breached) to the\n// team lead. Nothing is sent when no request moved up a level this run.\nconst r = $input.first().json.result;\nconst esc = (v) => String(v ?? '').replace(/[&<>\"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c]));\nconst when = (h) => (h < 0 ? `${Math.abs(h)} h overdue` : `in ${h} h`);\n\nconst table = (items) => `\n<table cellpadding=\"6\" cellspacing=\"0\" border=\"1\" style=\"border-collapse:collapse;font-size:13px\">\n  <tr style=\"background:#f3f4f6\"><th align=\"left\">Request</th><th align=\"left\">Title</th><th align=\"left\">Department</th>\n  <th>Priority</th><th align=\"left\">Assigned to</th><th align=\"left\">Due (${esc(r.timezone)})</th><th align=\"left\">When</th></tr>\n  ${items.map((i) => `<tr><td>${esc(i.request_id)}</td><td>${esc(i.title)}</td><td>${esc(i.department)}</td>\n  <td align=\"center\">${esc(i.priority)}</td><td>${esc(i.assigned_to || 'Unassigned')}</td><td>${esc(i.due_local)}</td>\n  <td>${esc(when(i.hours_to_due))}</td></tr>`).join('')}\n</table>`;\n\nconst mail = (to, subject, intro, items) => ({\n  json: {\n    from: r.mail_from,\n    to,\n    subject,\n    html: `<div style=\"font-family:Arial,sans-serif;font-size:14px\"><p>${intro}</p>${table(items)}\n           <p><a href=\"${esc(r.queue_url)}\">Open the request queue</a></p></div>`,\n  },\n});\n\nconst out = [];\nif (r.at_risk.length) {\n  out.push(mail(r.team_email,\n    `[Service Desk] SLA at risk: ${r.at_risk.length} request(s) due soon`,\n    'These open requests are due within the next 24 hours. Please pick them up or update their status.',\n    r.at_risk));\n}\nif (r.breached.length) {\n  out.push(mail(r.lead_email,\n    `[Service Desk] SLA breached: ${r.breached.length} request(s) escalated to you`,\n    'These open requests are past their SLA due date and have been escalated to you.',\n    r.breached));\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "3e4f5061-0000-4a00-8b00-00000000c005",
+      "name": "Send escalation email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        780,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "smtp": {
+          "id": "svcDeskMailpit01",
+          "name": "Mailpit (local SMTP)"
+        }
+      },
+      "parameters": {
+        "fromEmail": "={{ $json.from }}",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 15 minutes": {
+      "main": [
+        [
+          {
+            "node": "Escalate due requests (one transaction)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now (POST /webhook/escalation/run)": {
+      "main": [
+        [
+          {
+            "node": "Escalate due requests (one transaction)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escalate due requests (one transaction)": {
+      "main": [
+        [
+          {
+            "node": "Build escalation emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build escalation emails": {
+      "main": [
+        [
+          {
+            "node": "Send escalation email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

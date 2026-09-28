@@ -1,0 +1,11 @@
+# Secrets: copy .env.example to .env
+.env
+
+# The assessment brief is not part of the solution
+Dear Sara.pdf
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+SUBMISSION_EMAIL.md

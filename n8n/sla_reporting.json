@@ -1,0 +1,266 @@
+{
+  "id": "svcSlaReport0001",
+  "name": "SLA — Reporting",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "errorWorkflow": "svcOpsErrors0001"
+  },
+  "nodes": [
+    {
+      "id": "4f506172-0000-4a00-8b00-00000000d001",
+      "name": "Get report (GET /webhook/reports/sla?days=30)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        160
+      ],
+      "webhookId": "ad4e5f60-0000-4a00-8b00-00000000d001",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "reports/sla",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "4f506172-0000-4a00-8b00-00000000d002",
+      "name": "Build report for period",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        280,
+        160
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "postgres": {
+          "id": "svcDeskPostgres1",
+          "name": "Service Desk DB"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT sla_report(now() - make_interval(days => $1::int), now()) AS result;",
+        "options": {
+          "queryReplacement": "={{ [ Math.min(Math.max(parseInt($json.query?.days) || 30, 1), 366) ] }}"
+        }
+      }
+    },
+    {
+      "id": "4f506172-0000-4a00-8b00-00000000d003",
+      "name": "200 Report",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        560,
+        60
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.result) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "4f506172-0000-4a00-8b00-00000000d004",
+      "name": "500 Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        560,
+        260
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, outcome: 'ERROR', message: 'The report could not be built. Please try again in a few minutes.' }) }}",
+        "options": {
+          "responseCode": 500
+        }
+      }
+    },
+    {
+      "id": "4f506172-0000-4a00-8b00-00000000d005",
+      "name": "Fail execution (alerts ops)",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        820,
+        260
+      ],
+      "parameters": {
+        "errorMessage": "SLA report API failed: the database query errored (see the previous node)."
+      }
+    },
+    {
+      "id": "4f506172-0000-4a00-8b00-00000000d006",
+      "name": "Workdays 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        480
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "4f506172-0000-4a00-8b00-00000000d007",
+      "name": "Build last-30-days report",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        280,
+        480
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "postgres": {
+          "id": "svcDeskPostgres1",
+          "name": "Service Desk DB"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT sla_report() AS result;",
+        "options": {}
+      }
+    },
+    {
+      "id": "4f506172-0000-4a00-8b00-00000000d008",
+      "name": "Format report email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        480
+      ],
+      "parameters": {
+        "jsCode": "// Renders the sla_report() result as an HTML email for the team lead.\nconst r = $input.first().json.result;\nconst t = r.totals;\nconst esc = (v) => String(v ?? '').replace(/[&<>\"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c]));\nconst pct = (v) => (v === null || v === undefined ? '—' : `${v}%`);\nconst num = (v) => (v === null || v === undefined ? '—' : v);\n\nconst kpi = (label, value, color = '#111827') =>\n  `<td style=\"padding:10px 18px;border:1px solid #e5e7eb\"><div style=\"font-size:12px;color:#6b7280\">${label}</div>\n   <div style=\"font-size:22px;font-weight:bold;color:${color}\">${esc(value)}</div></td>`;\n\nconst table = (title, list, key, label) => `\n<h3 style=\"margin:20px 0 6px\">${title}</h3>\n<table cellpadding=\"6\" cellspacing=\"0\" border=\"1\" style=\"border-collapse:collapse;font-size:13px\">\n  <tr style=\"background:#f3f4f6\"><th align=\"left\">${label}</th><th>Total</th><th>Open</th><th>At risk</th>\n  <th>Breached</th><th>Met</th><th>Compliance</th><th>Avg resolution (h)</th></tr>\n  ${list.map((x) => `<tr><td>${esc(x[key])}</td><td align=\"right\">${x.total}</td><td align=\"right\">${x.open}</td>\n  <td align=\"right\">${x.at_risk}</td><td align=\"right\">${x.breached}</td><td align=\"right\">${x.met}</td>\n  <td align=\"right\">${pct(x.compliance_pct)}</td><td align=\"right\">${num(x.avg_resolution_hours)}</td></tr>`).join('')\n    || '<tr><td colspan=\"8\">No requests in this period</td></tr>'}\n</table>`;\n\nconst html = `<div style=\"font-family:Arial,sans-serif;font-size:14px\">\n<p>SLA report for requests created ${esc(r.period_label)}.</p>\n<table cellspacing=\"0\"><tr>\n  ${kpi('Requests', t.total)}${kpi('Open', t.open)}${kpi('At risk (open)', t.at_risk, '#b45309')}\n  ${kpi('Breached', t.breached, '#b91c1c')}${kpi('SLA compliance', pct(t.compliance_pct), '#15803d')}\n</tr></table>\n${table('By department', r.by_department, 'department', 'Department')}\n${table('By priority', r.by_priority, 'priority', 'Priority')}\n${table('By category', r.by_category, 'category', 'Category')}\n<p style=\"color:#6b7280;font-size:12px\">Compliance = requests that met their SLA / requests whose SLA outcome is known\n(closed, or still open past due). Open requests that are not yet due are not counted.</p>\n<p><a href=\"${esc(r.queue_url)}\">Open the Service Desk</a></p></div>`;\n\nreturn [{\n  json: {\n    from: r.mail_from,\n    to: r.recipients,\n    subject: `[Service Desk] SLA report: ${pct(t.compliance_pct)} compliance, ${t.breached} breached, ${t.open} open`,\n    html,\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "4f506172-0000-4a00-8b00-00000000d009",
+      "name": "Send report email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        800,
+        480
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "smtp": {
+          "id": "svcDeskMailpit01",
+          "name": "Mailpit (local SMTP)"
+        }
+      },
+      "parameters": {
+        "fromEmail": "={{ $json.from }}",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Get report (GET /webhook/reports/sla?days=30)": {
+      "main": [
+        [
+          {
+            "node": "Build report for period",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build report for period": {
+      "main": [
+        [
+          {
+            "node": "200 Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "500 Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "500 Error": {
+      "main": [
+        [
+          {
+            "node": "Fail execution (alerts ops)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workdays 08:00": {
+      "main": [
+        [
+          {
+            "node": "Build last-30-days report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build last-30-days report": {
+      "main": [
+        [
+          {
+            "node": "Format report email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format report email": {
+      "main": [
+        [
+          {
+            "node": "Send report email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

@@ -1,0 +1,90 @@
+{
+  "id": "svcOpsErrors0001",
+  "name": "Ops — Error alerts",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "nodes": [
+    {
+      "id": "50617283-0000-4a00-8b00-00000000e001",
+      "name": "When any workflow fails",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "50617283-0000-4a00-8b00-00000000e002",
+      "name": "Build alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Every workflow in this project names this one as its error workflow.\n// Recipients are set on the email node rather than read from the database,\n// so the alert still goes out when the database is what failed.\nconst e = $input.first().json;\nconst esc = (v) => String(v ?? '').replace(/[&<>\"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c]));\nconst name = e.workflow?.name ?? 'unknown workflow';\nconst message = e.execution?.error?.message ?? e.trigger?.error?.message ?? 'No error message';\nconst node = e.execution?.lastNodeExecuted;\nconst url = e.execution?.url;\n\nreturn [{\n  json: {\n    subject: `[Service Desk] Workflow failed: ${name}`,\n    html: `<div style=\"font-family:Arial,sans-serif;font-size:14px\">\n      <p>The workflow <b>${esc(name)}</b> failed${node ? ` at node <b>${esc(node)}</b>` : ''}.</p>\n      <p>Error: <code>${esc(message)}</code></p>\n      ${url ? `<p><a href=\"${esc(url)}\">Open the failed execution in n8n</a></p>` : ''}</div>`,\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "50617283-0000-4a00-8b00-00000000e003",
+      "name": "Email the team lead",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        520,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "smtp": {
+          "id": "svcDeskMailpit01",
+          "name": "Mailpit (local SMTP)"
+        }
+      },
+      "parameters": {
+        "fromEmail": "service-desk@example.com",
+        "toEmail": "automation-lead@example.com",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When any workflow fails": {
+      "main": [
+        [
+          {
+            "node": "Build alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build alert": {
+      "main": [
+        [
+          {
+            "node": "Email the team lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

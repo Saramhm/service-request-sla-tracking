@@ -1,0 +1,147 @@
+{
+  "id": "svcReqQueue00001",
+  "name": "Service Request — Queue",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "errorWorkflow": "svcOpsErrors0001"
+  },
+  "nodes": [
+    {
+      "id": "1c2d3e4f-0000-4a00-8b00-00000000a001",
+      "name": "Get queue",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "7a1b2c3d-0000-4a00-8b00-00000000a001",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "requests",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "1c2d3e4f-0000-4a00-8b00-00000000a002",
+      "name": "Read queue (filters: status, department, sla)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        260,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "postgres": {
+          "id": "svcDeskPostgres1",
+          "name": "Service Desk DB"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT list_requests($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [ $json.query ] }}"
+        }
+      }
+    },
+    {
+      "id": "1c2d3e4f-0000-4a00-8b00-00000000a003",
+      "name": "200 Queue",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        540,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.result) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "1c2d3e4f-0000-4a00-8b00-00000000a004",
+      "name": "500 Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        540,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, outcome: 'ERROR', message: 'The queue could not be loaded. Please try again in a few minutes.' }) }}",
+        "options": {
+          "responseCode": 500
+        }
+      }
+    },
+    {
+      "id": "9f000000-0000-4a00-8b00-000000000001",
+      "name": "Fail execution (alerts ops)",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        800,
+        400
+      ],
+      "parameters": {
+        "errorMessage": "Queue read failed: the database query errored (see the previous node)."
+      }
+    }
+  ],
+  "connections": {
+    "Get queue": {
+      "main": [
+        [
+          {
+            "node": "Read queue (filters: status, department, sla)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read queue (filters: status, department, sla)": {
+      "main": [
+        [
+          {
+            "node": "200 Queue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "500 Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "500 Error": {
+      "main": [
+        [
+          {
+            "node": "Fail execution (alerts ops)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

@@ -1,0 +1,302 @@
+{
+  "id": "svcReqUpdate0001",
+  "name": "Service Request — Update",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "errorWorkflow": "svcOpsErrors0001"
+  },
+  "nodes": [
+    {
+      "id": "2d3e4f50-0000-4a00-8b00-00000000b001",
+      "name": "Receive update",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "8b2c3d4e-0000-4a00-8b00-00000000b001",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "requests/update",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "2d3e4f50-0000-4a00-8b00-00000000b002",
+      "name": "Apply update (one transaction, audited)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        260,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "postgres": {
+          "id": "svcDeskPostgres1",
+          "name": "Service Desk DB"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT update_request($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [ { request_id: $json.body?.request_id, status: $json.body?.status, assigned_to: $json.body?.assigned_to, note: $json.body?.note, actor: $json.body?.actor } ] }}"
+        }
+      }
+    },
+    {
+      "id": "2d3e4f50-0000-4a00-8b00-00000000b003",
+      "name": "Route by outcome",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        520,
+        200
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "b1e3f0c2-2222-4a8b-9c0d-000000000001",
+                    "leftValue": "={{ $json.result.outcome }}",
+                    "rightValue": "UPDATED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Updated"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "b1e3f0c2-2222-4a8b-9c0d-000000000002",
+                    "leftValue": "={{ $json.result.outcome }}",
+                    "rightValue": "NOT_FOUND",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Not found"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "b1e3f0c2-2222-4a8b-9c0d-000000000003",
+                    "leftValue": "={{ $json.result.outcome }}",
+                    "rightValue": "INVALID",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Invalid"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Unexpected"
+        }
+      }
+    },
+    {
+      "id": "2d3e4f50-0000-4a00-8b00-00000000b004",
+      "name": "200 Updated",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        800,
+        60
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify(Object.assign({ ok: true }, $json.result)) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "2d3e4f50-0000-4a00-8b00-00000000b005",
+      "name": "404 Not found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        800,
+        220
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify(Object.assign({ ok: false }, $json.result)) }}",
+        "options": {
+          "responseCode": 404
+        }
+      }
+    },
+    {
+      "id": "2d3e4f50-0000-4a00-8b00-00000000b006",
+      "name": "422 Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        800,
+        380
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify(Object.assign({ ok: false }, $json.result)) }}",
+        "options": {
+          "responseCode": 422
+        }
+      }
+    },
+    {
+      "id": "2d3e4f50-0000-4a00-8b00-00000000b007",
+      "name": "500 Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        800,
+        540
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, outcome: 'ERROR', message: 'The request could not be updated. Nothing was changed; please try again.' }) }}",
+        "options": {
+          "responseCode": 500
+        }
+      }
+    },
+    {
+      "id": "9f000000-0000-4a00-8b00-000000000003",
+      "name": "Fail execution (alerts ops)",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1060,
+        540
+      ],
+      "parameters": {
+        "errorMessage": "Request update failed: the database call errored or returned an unknown outcome (see the previous nodes)."
+      }
+    }
+  ],
+  "connections": {
+    "Receive update": {
+      "main": [
+        [
+          {
+            "node": "Apply update (one transaction, audited)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply update (one transaction, audited)": {
+      "main": [
+        [
+          {
+            "node": "Route by outcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "500 Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by outcome": {
+      "main": [
+        [
+          {
+            "node": "200 Updated",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "404 Not found",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "422 Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "500 Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "500 Error": {
+      "main": [
+        [
+          {
+            "node": "Fail execution (alerts ops)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}
